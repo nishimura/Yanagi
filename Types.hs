@@ -1,7 +1,8 @@
 {-# Language FlexibleInstances, UndecidableInstances, IncoherentInstances #-}
 module Yanagi.Types where
 
-import Monad (liftM)
+import Control.Monad (liftM, foldM, (>=>))
+import Data.Maybe (fromMaybe)
 
 import Yanagi.Template.Database (DbRow(..))
 
@@ -12,18 +13,20 @@ data Result = Text String | Html String
               deriving Show
 
 type EntryPoints = [(String, Act)]
-newtype Act = Act { runAct :: Request -> IO ViewData }
 
-data ViewData = ViewData { templateName :: Maybe TmplName
-                         , outputType   :: Maybe OutputType
-                         , results      :: Results
-                         } deriving Show
+data Context = Context { request  :: Request
+                       , inputs   :: Req
+                       , pathInfo :: [String]
+                       , results  :: Results
+                       , templateName :: TmplName
+                       , outputType   :: OutputType
+                       } deriving Show
+type Act = Context -> IO Context
 
 data Request = Request { requestMethod :: String
                        , pathInfoStr   :: String
                        , pathInfoList  :: [String]
                        , serverName    :: String
-                       , inputs        :: Req
                        } deriving Show
 type Req = [(String, String)]
 
@@ -55,7 +58,7 @@ appConfig = AppConfig { templateDir       = "../template/"
                       , contentType       = "text/html"
                       , pathInfoFilter    = id
                       , defaultActName    = ActName "Top"
-                      , defaultAct        = emptyAct
+                      , defaultAct        = return . id
                       }
 pathInfoToActName :: (String -> String) -> ActName -> String -> ActName
 pathInfoToActName f def ('/':as) = pathInfoToActName f def as
@@ -65,24 +68,33 @@ pathInfoToActName f def as = case f as of
 
 
 -- helper functions
-viewPlusResults :: ViewData -> Results -> ViewData
-viewPlusResults a b = a { results = results a ++ b }
+plusResults :: Context -> Results -> Context
+plusResults c r = c { results = results c ++ r }
 
+
+replaceResults :: (String, Result) -> Results -> Results
+replaceResults _ [] = []
+replaceResults r@(n1,v1) (a@(n2,v2):as)
+    | n1 == n2  = (n1,v1):replaceResults r as
+    | otherwise = a:replaceResults r as
+
+replaceLoop :: (Results -> Results) -> [String] -> Results -> Results
+replaceLoop f [] r = f r
+replaceLoop f (a:as) r =
+    case lookup a r of
+      Just (Loop inner) ->
+          replaceResults (a,Loop $ map (replaceLoop f as) inner) r
+      _ -> r
 
 insertLoop :: String -> Int -> (String, Result) -> Results -> Results
 insertLoop a num new res =
     case lookup a res of
-      Just (Loop l) -> (a, Loop $ f num l):deleteInLoop a res
+      Just (Loop l) -> replaceResults (a, Loop $ f num l) res
       _             -> res
     where f :: Int -> [Results] -> [Results]
           f 0 (r:rs) = (new:r):rs
           f _ []     = []
           f n (r:rs) = r:f (n-1) rs
-deleteInLoop a [] = []
-deleteInLoop a (r@(name,_):rs)
-    | a == name = deleteInLoop a rs
-    | otherwise = r:deleteInLoop a rs
-
 
 insertLoops :: [String] -> [Int] -> (String, Result) -> Results -> Results
 insertLoops [] _ _ r = r
@@ -91,7 +103,7 @@ insertLoops [a] (b:bs) new res = insertLoop a b new res
 insertLoops (a:as) [b] new res = insertLoop a b new res
 insertLoops (a:as) (b:bs) new res =
     case lookup a res of
-      Just (Loop l) -> (a, Loop $ f b l):deleteInLoop a res
+      Just (Loop l) -> replaceResults (a, Loop $ f b l) res
       _             -> res
     where f 0 (r:rs) = (insertLoops as bs new r):rs
           f _ []     = []
@@ -130,22 +142,34 @@ actToTmpl :: ActName -> TmplName
 actToTmpl = TmplName . unActName
 
 
-viewData :: Results -> ViewData
-viewData = ViewData Nothing Nothing
-
-ioViewData :: IO Results -> IO ViewData
-ioViewData = liftM viewData
-
-emptyAct :: Act
-emptyAct = Act (return . viewData . const [])
-
-act :: (Request -> Results) -> Act
-act f = Act (return . viewData . f)
-ioAct :: (Request -> IO Results) -> Act
-ioAct f = Act (ioViewData . f)
+act :: (Req -> IO Results) -> Act
+act f c@(Context { inputs = req }) =
+    f req >>= return . (\res -> c { results = res })
 
 mapAct :: Act
-mapAct = act $ hashToResults . inputs
+mapAct c@(Context { inputs = i }) =
+    return $ c { results = hashToResults i }
+
+-- testing...
+-- filterAct => Acts
+-- type MaybeAct = Context -> IO (Maybe Context)
+filterAct :: [Context -> IO (Maybe Context)] -> Context -> IO Context
+filterAct fs a =
+    liftM (\x -> fromMaybe a x) (foldM foldImpl (Just a) fs)
+        where foldImpl :: Maybe Context -> (Context -> IO (Maybe Context))
+                       -> IO (Maybe Context)
+              foldImpl a f = case a of
+                               Just a -> f a
+                               Nothing -> return Nothing
+
+
+resultsFilterAct :: IO Results -> Act
+resultsFilterAct plus c@(Context { results = res })
+    = plus >>= return . (\x -> c { results = res ++ x })
+resultsFilterEp :: IO Results -> EntryPoints -> EntryPoints
+resultsFilterEp _ [] = []
+resultsFilterEp plus ((k,f):as) =
+    (k,resultsFilterAct plus >=> f):resultsFilterEp plus as
 
 rowsToResults :: (DbRow a) => [a] -> [Results]
 rowsToResults = map rowToResults
@@ -173,27 +197,3 @@ class Loopable a where
 instance (DbRow a) => Loopable a where
     toLoop as = Loop $ rowsToResults as
 
-
-filterAllAct :: Results -> EntryPoints -> EntryPoints
-filterAllAct res eps = map (f1 res) eps
-    where f1 res (a, act) = (a, filterAct res act)
-
-filterAct :: Results -> Act -> Act
-filterAct res a = Act (\req -> do orig <- (runAct a) req
-                                  let res' = results orig
-                                  return $ orig { results = res ++ res' }
-                      )
-
-
--- pathinfo 1
-subAct :: (Request -> String) -> Act -> EntryPoints -> Act
-subAct f empty as = Act (\req -> case lookup (f req) as of
-                                   Just x  -> runAct x req
-                                   Nothing -> runAct empty req
-                        )
-
-
-subAct1 :: Act -> EntryPoints -> Act
-subAct1 = subAct (\(Request { pathInfoList = l }) -> f l)
-    where f (_:a:_) = a
-          f _ = ""

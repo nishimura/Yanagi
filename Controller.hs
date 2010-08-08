@@ -17,22 +17,23 @@ run = CGI.runFastCGIConcurrent' forkIO 100 . router
 
 router :: AppConfig -> CGI.CGI CGI.CGIResult
 router cfg = CGI.setHeader "Content-type" (contentType cfg)
-             >> request >>= CGI.liftIO . assignEpView cfg >>= CGI.output
+             >> makeRequests >>= CGI.liftIO . assignEpView cfg >>= CGI.output
 
-assignEpView :: AppConfig -> Request -> IO String
-assignEpView cfg req = do
-  vdata  <- runAct (findAct cfg name) req
-  let tName = findTemplateName name vdata
+assignEpView :: AppConfig -> (Request, Req) -> IO String
+assignEpView cfg (req,inp) = do
+  newCtx <- (findAct cfg name) defaultContext
+  let tName = templateName newCtx
   tmpl <- templateData cfg tName
-  return $ View.parseTemplate tName tmpl $ results vdata
+  return $ View.parseTemplate tName tmpl $ results newCtx
       where name :: ActName
             name = findActName cfg req
-
-findTemplateName :: ActName -> ViewData -> TmplName
-findTemplateName a (ViewData {templateName = t}) =
-    case t of
-      Just x  -> x
-      Nothing -> actToTmpl a
+            defaultContext = Context { request  = req
+                                     , inputs   = inp
+                                     , pathInfo = pathInfoList req
+                                     , results  = []
+                                     , templateName = actToTmpl name
+                                     , outputType = defaultOutputType cfg
+                                     }
 
 findAct :: AppConfig -> ActName -> Act
 findAct cfg name =
@@ -43,8 +44,8 @@ findActName cfg req = pathInfoToActName (pathInfoFilter cfg)
                   (defaultActName cfg) (pathInfoStr req)
 
 
-request :: (CGI.MonadCGI m) => m Request
-request = do
+makeRequests :: (CGI.MonadCGI m) => m (Request, Req)
+makeRequests = do
   r <- CGI.requestMethod
   p <- CGI.pathInfo
   let pl = split '/' (case p of
@@ -52,7 +53,11 @@ request = do
                         ps       -> ps)
   s <- CGI.serverName
   rq <- CGI.getInputs
-  return $ Request r p pl s (decode rq)
+  return $ (Request { requestMethod = r
+                    , pathInfoStr   = p
+                    , pathInfoList  = pl
+                    , serverName    = s
+                    } , decode rq)
       where split sep xs = case (break (== sep) xs) of
                              (ys, [])       -> [ys]
                              (ys, (sep':zs)) -> [ys] ++ split sep' zs
