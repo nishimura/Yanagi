@@ -67,6 +67,7 @@ convRowInfo [_,n,t,nn,_,_] =
               nn' = case (fromSql nn)::String of
                       -- Sqlite3
                       "99" -> True
+                      "1"  -> True
                       "0"  -> False
                       -- PostgreSQL
                       "True"  -> True
