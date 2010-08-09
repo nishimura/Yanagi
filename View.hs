@@ -7,6 +7,8 @@ import Codec.Binary.UTF8.String (encodeString)
 
 type YanagiParser a = CharParser Results a
 
+data Filter = Normal | Br | Html
+
 parseTemplate :: TmplName -> String -> Results -> String
 parseTemplate (TmplName name) tmpl res = parseYanagi name tmpl res
 --
@@ -85,24 +87,50 @@ runLoop r inp n (c,res) = do setState (res ++ [(n ++ ".loopCounter",
 
 variable :: YanagiParser String
 variable = do
-  name <- between (char '{') (char '}') (varName)
+  v <- between (char '{') (char '}') (varFilter)
   st   <- getState
-  return $ lookupVar name st
+  return $ lookupVar v st
+
+varFilter :: YanagiParser (String, Filter)
+varFilter = do
+  v <- varName
+  f <- option Normal parseFilter
+  return (v, f)
+
+parseFilter :: YanagiParser Filter
+parseFilter = do
+  char ':'
+  f <- many1 alphaNum
+  case f of
+    "h" -> return Html
+    "b" -> return Br
+    _   -> return Normal
 
 varName :: YanagiParser String
 varName = many1 (alphaNum <|> oneOf "_." <?> "varName")
 
-lookupVar :: String -> Results -> String
-lookupVar n r = case lookup n r of
-                  Just (Text a) -> escape $ encodeString a
-                  Just (Html a) -> encodeString a
+lookupVar :: (String, Filter) -> Results -> String
+lookupVar (n,f) r = case lookup n r of
+                  Just (Text a) -> varFilter $ encodeString a
                   Just (Loop _) -> "" -- todo?
                   _             -> ""
+    where varFilter :: String -> String
+          varFilter = case f of
+                        Normal -> escape
+                        Html   -> id
+                        Br     -> nl2br
+
+nl2br :: String -> String
+nl2br [] = []
+nl2br ('\r':as) = nl2br as
+nl2br ('\n':as) = "<br>\n"++nl2br as
+nl2br (a:as)    = a:nl2br as
+
 escape :: String -> String
+escape [] = []
 escape (a:as) | a == '<'  = "&lt;" ++ escape as
               | a == '>'  = "&gt;" ++ escape as
               | otherwise = a:escape as
-escape [] = []
 
 text :: YanagiParser Char
 text = try(do {

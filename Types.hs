@@ -7,7 +7,7 @@ import Data.Maybe (fromMaybe)
 import Yanagi.Template.Database (DbRow(..))
 
 type Results = [(String, Result)]
-data Result = Text String | Html String
+data Result = Text String -- | Html String
             | Loop [Results]
             | Ifvar Bool
               deriving Show
