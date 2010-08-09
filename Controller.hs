@@ -51,12 +51,14 @@ makeRequests = do
   let pl = split '/' (case p of
                         ('/':ps) -> ps
                         ps       -> ps)
-  s <- CGI.serverName
+  sv <- CGI.serverName
   rq <- CGI.getInputs
+  sc <- CGI.scriptName
   return $ (Request { requestMethod = r
                     , pathInfoStr   = p
                     , pathInfoList  = pl
-                    , serverName    = s
+                    , serverName    = sv
+                    , scriptName    = sc
                     } , decode rq)
       where split sep xs = case (break (== sep) xs) of
                              (ys, [])       -> [ys]

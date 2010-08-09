@@ -27,6 +27,7 @@ data Request = Request { requestMethod :: String
                        , pathInfoStr   :: String
                        , pathInfoList  :: [String]
                        , serverName    :: String
+                       , scriptName    :: String
                        } deriving Show
 type Req = [(String, String)]
 
