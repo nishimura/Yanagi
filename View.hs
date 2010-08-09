@@ -111,14 +111,14 @@ varName = many1 (alphaNum <|> oneOf "_." <?> "varName")
 
 lookupVar :: (String, Filter) -> Results -> String
 lookupVar (n,f) r = case lookup n r of
-                  Just (Text a) -> varFilter $ encodeString a
+                  Just (Text a) -> choiceFilter $ encodeString a
                   Just (Loop _) -> "" -- todo?
                   _             -> ""
-    where varFilter :: String -> String
-          varFilter = case f of
-                        Normal -> escape
-                        Html   -> id
-                        Br     -> nl2br
+    where choiceFilter :: String -> String
+          choiceFilter = case f of
+                           Normal -> escape
+                           Html   -> id
+                           Br     -> nl2br . escape
 
 nl2br :: String -> String
 nl2br [] = []
