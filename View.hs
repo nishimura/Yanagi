@@ -122,6 +122,7 @@ lookupVar (n,f) r = case lookup n r of
 
 nl2br :: String -> String
 nl2br [] = []
+nl2br ('\r':'\n':as) = "<br>\n"++nl2br as
 nl2br ('\r':as) = nl2br as
 nl2br ('\n':as) = "<br>\n"++nl2br as
 nl2br (a:as)    = a:nl2br as

@@ -67,7 +67,7 @@ internalSave table cols builder conn x typ = do
       (queryStr,params) = case typ of
                             INSERT -> (insert, insertSqlVals)
                             UPDATE -> (update, (tail xSqlVals)++[head xSqlVals])
-      -- プライマリキー：snd $ head xlist
+      -- primary key：snd $ head xlist
   stmt <- prepare conn queryStr
   ret <- execute stmt params
   return ret
